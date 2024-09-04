@@ -21,19 +21,40 @@ def findHands(img):
 
     result = hands.process(img_rgb)
 
+    hands_data = []
+
     if result.multi_hand_landmarks:
-            for hand_landmarks in result.multi_hand_landmarks:
+            for hand_landmarks, hand_info in zip(result.multi_hand_landmarks, result.multi_handedness):
                 mp_draw.draw_landmarks(img, hand_landmarks, mp_hands.HAND_CONNECTIONS)
+                hands_data.append({'landmarks': hand_landmarks, 'info': hand_info})
 
-    return img
+    return img, hands_data
 
+
+def fingerFlection(landmarks):
+     flection = []
+
+     #print(landmarks.landmark[8].y)
+
+     for tip in [8, 12, 16, 20]:
+            if landmarks.landmark[tip].y < landmarks.landmark[tip-2].y:
+                 print("ponta {tip} levantada")
+                 
+
+     return True
 
 
 while True:
+
     _, img = cam.read()
     img = cv.flip(img, 1)
 
-    img = findHands(img)
+    img, hands_data = findHands(img)
+
+    if len(hands_data) > 0:
+        fingerFlection(hands_data[0]['landmarks'])
+    
+    #    print(hands_data[0]['info'])
 
     cv.imshow("Camera", img)
 
