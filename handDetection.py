@@ -7,6 +7,7 @@ import math
 flexion = [None, None]  
 proximity = [None, None]
 contact = [None, None]
+thumbDirection = [None, None]
 
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
@@ -90,16 +91,40 @@ def thumbContact(landmarks, thresholdTogether=0.08, thresholdSeparated = 0.11):
 
     return thumbContact
 
-def thumbDirection(landmarks):
-    tip = landmarks.landmark[4]
-    wrist = landmarks.landmark[0]
+import math
 
-    if tip.y < wrist.y:
-        return 1
-    elif tip.y > wrist.y:
-        return -1
+def pointingThumbDirection(landmarks, sideThreshold=10):
+    tip = landmarks.landmark[4]   # Ponta do polegar
+    base = landmarks.landmark[3]  # Base do polegar
+    wrist = landmarks.landmark[0] # Pulso
 
-    return True
+    # Verifica se o polegar está para cima (tip acima da base e do pulso)
+    if tip.y < base.y and tip.y < wrist.y:
+        return 1  # Polegar para cima
+    
+    # Verifica se o polegar está para baixo (tip abaixo da base e do pulso)
+    elif tip.y > base.y and tip.y > wrist.y:
+        return -1  # Polegar para baixo
+
+    # Calcular o vetor entre a base e a ponta do polegar
+    delta_x = tip.x - base.x
+    delta_y = tip.y - base.y
+
+    # Calcular a inclinação (ângulo) do vetor
+    angle = math.atan2(delta_y, delta_x)  # Ângulo em radianos
+
+    # Verifica se o polegar está de lado (ângulo próximo de 0 ou π)
+    if abs(angle) < sideThreshold or abs(abs(angle) - math.pi) < sideThreshold:
+        return 0  # Polegar de lado
+
+    # Caso não se encaixe nas condições acima, podemos retornar um valor padrão
+    return None
+
+def euclidean_distance(point1, point2):
+    return math.sqrt((point1.x - point2.x) ** 2 + 
+                     (point1.y - point2.y) ** 2 + 
+                     (point1.z - point2.z) ** 2)
+
 
 
 while True:
@@ -126,7 +151,12 @@ while True:
             'value': thumbContact(hands_data[0]['landmarks'])
         }
 
-        print(contact[0])
+        thumbDirection[0] = {
+            'info': hands_data[0]['info'].classification[0].label,
+            'value': pointingThumbDirection(hands_data[0]['landmarks'])
+        }
+
+        print(thumbDirection[0])
 
         if len(hands_data) > 1:
             flexion[1] = {
