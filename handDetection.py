@@ -8,6 +8,8 @@ flexion = [None, None]
 proximity = [None, None]
 contact = [None, None]
 thumbDirection = [None, None]
+palm = [None, None]
+handDirection = [None, None]
 
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
@@ -33,16 +35,24 @@ def findHands(img):
     return img, hands_data
 
 
-def fingerFlexion(landmarks):
+def fingerFlexion(landmarks, handSide):
     fingerFlexion = []
 
     # Dedo polegar
-    if landmarks.landmark[4].x > landmarks.landmark[3].x:
-        fingerFlexion.append(1)  # Flexionado
-    elif landmarks.landmark[4].x < landmarks.landmark[3].x:
-        fingerFlexion.append(-1)  # Não flexionado
+    if handSide == "Right":
+        if landmarks.landmark[4].x > landmarks.landmark[3].x:
+            fingerFlexion.append(-1)  # Flexionado
+        elif landmarks.landmark[4].x < landmarks.landmark[3].x:
+            fingerFlexion.append(1)  # Não flexionado
+        else:
+            fingerFlexion.append(0)  # Neutro
     else:
-        fingerFlexion.append(0)  # Neutro
+        if landmarks.landmark[4].x > landmarks.landmark[3].x:
+            fingerFlexion.append(1)  # Flexionado
+        elif landmarks.landmark[4].x < landmarks.landmark[3].x:
+            fingerFlexion.append(-1)  # Não flexionado
+        else:
+            fingerFlexion.append(0)  # Neutro
 
     # Outros dedos
     for tip in [8, 12, 16, 20]:
@@ -61,7 +71,7 @@ def euclidean_distance(point1, point2):
                      (point1.y - point2.y) ** 2 + 
                      (point1.z - point2.z) ** 2)
 
-def fingerProximity(landmarks, thresholdTogether=0.05, thresholdSeparated = 0.10):
+def fingerProximity(landmarks, thresholdTogether=0.05, thresholdSeparated = 0.07):
     fingerProximity = []
 
     for tip, nextPoint in zip([8, 12, 15], [11, 16, 20]):
@@ -76,7 +86,7 @@ def fingerProximity(landmarks, thresholdTogether=0.05, thresholdSeparated = 0.10
 
     return fingerProximity
 
-def thumbContact(landmarks, thresholdTogether=0.08, thresholdSeparated = 0.11):
+def thumbContact(landmarks, thresholdTogether=0.06, thresholdSeparated = 0.10):
     thumbContact = []
 
     for tip in [8, 12, 16, 20]:
@@ -120,12 +130,75 @@ def pointingThumbDirection(landmarks, sideThreshold=10):
     # Caso não se encaixe nas condições acima, podemos retornar um valor padrão
     return None
 
-def euclidean_distance(point1, point2):
-    return math.sqrt((point1.x - point2.x) ** 2 + 
-                     (point1.y - point2.y) ** 2 + 
-                     (point1.z - point2.z) ** 2)
+def palmDirection(landmarks):
+    # One-hot encoding for palm orientation: Left, Right, Down, Up, Inward, Outward
+    palmDirections = [0, 0, 0, 0, 0, 0] 
+    
+    # Coordenadas principais para definir os vetores
+    palm = np.array([landmarks.landmark[0].x, landmarks.landmark[0].y, landmarks.landmark[0].z])  # Centro da palma
+    base_middle_finger = np.array([landmarks.landmark[9].x, landmarks.landmark[9].y, landmarks.landmark[9].z])  # Base do dedo médio
+    base_pinky_finger = np.array([landmarks.landmark[17].x, landmarks.landmark[17].y, landmarks.landmark[17].z])  # Base do dedo mínimo
 
+    # Vetores que definem a orientação da mão
+    palm_vector = base_middle_finger - palm
+    base_vector = base_pinky_finger - palm
 
+    # Vetor normal à palma da mão (produto vetorial dos dois vetores da palma)
+    normal_vector = np.cross(palm_vector, base_vector)
+
+    # Direção Z -> Determina se a palma está voltada para cima (Up) ou para baixo (Down)
+    if normal_vector[2] > 0:
+        palmDirections[3] = 1  # Up
+    else:
+        palmDirections[2] = 1  # Down
+
+    # Direção X -> Determina se a palma está orientada para esquerda (Left) ou direita (Right)
+    if normal_vector[0] > 0:
+        palmDirections[1] = 1  # Right
+    else:
+        palmDirections[0] = 1  # Left
+
+    # Direção Y -> Determina se a palma está voltada para dentro (Inward) ou para fora (Outward)
+    if normal_vector[1] > 0:
+        palmDirections[5] = 1  # Outward
+    else:
+        palmDirections[4] = 1  # Inward
+
+    return palmDirections
+
+def handLandmarks(landmarks):
+    return [[lm.x, lm.y, lm.z] for lm in landmarks.landmark]
+
+def process_hand_data(hand_data, index):
+    flexion[index] = {
+        'info': hand_data['info'].classification[0].label,
+        'value': fingerFlexion(hand_data['landmarks'], hand_data['info'].classification[0].label)
+    }
+
+    proximity[index] = {
+        'info': hand_data['info'].classification[0].label,
+        'value': fingerProximity(hand_data['landmarks'])
+    }
+
+    contact[index] = {
+        'info': hand_data['info'].classification[0].label,
+        'value': thumbContact(hand_data['landmarks'])
+    }
+
+    thumbDirection[index] = {
+        'info': hand_data['info'].classification[0].label,
+        'value': pointingThumbDirection(hand_data['landmarks'])
+    }
+
+    palm[index] = {
+        'info': hand_data['info'].classification[0].label,
+        'value': palmDirection(hand_data['landmarks'])
+    }
+
+    handDirection[index] = {
+        'info': hand_data['info'].classification[0].label,
+        'values': handLandmarks(hand_data['landmarks'])
+    }
 
 while True:
     ret, img = cam.read()
@@ -135,51 +208,10 @@ while True:
     img = cv.flip(img, 1)
     img, hands_data = findHands(img)
 
-    if len(hands_data) > 0:
-        flexion[0] = {
-            'info': hands_data[0]['info'].classification[0].label,
-            'value': fingerFlexion(hands_data[0]['landmarks'])
-        }
+    for i, hand_data in enumerate(hands_data[:2]):  # Limita ao máximo de 2 mãos
+        process_hand_data(hand_data, i)
 
-        proximity[0] = {
-            'info': hands_data[0]['info'].classification[0].label,
-            'value': fingerProximity(hands_data[0]['landmarks'])
-        }
-
-        contact[0] = {
-            'info': hands_data[0]['info'].classification[0].label,
-            'value': thumbContact(hands_data[0]['landmarks'])
-        }
-
-        thumbDirection[0] = {
-            'info': hands_data[0]['info'].classification[0].label,
-            'value': pointingThumbDirection(hands_data[0]['landmarks'])
-        }
-
-        print(thumbDirection[0])
-
-        if len(hands_data) > 1:
-            flexion[1] = {
-                'info': hands_data[1]['info'].classification[0].label,
-                'value': fingerFlexion(hands_data[1]['landmarks'])
-            }
-
-            proximity[1] = {
-                'info': hands_data[1]['info'].classification[0].label,
-                'value': fingerProximity(hands_data[1]['landmarks'], 0.06, 0.13)
-            }
-
-            contact[1] = {
-                'info': hands_data[1]['info'].classification[0].label,
-                'value': thumbContact(hands_data[1]['landmarks'])
-            }
-
-
-    #Exibe a flexão detectada
-    #if flexion[0] is not None:
-        #print(f'Mão 1: {flexion[0]}')
-    #if flexion[1] is not None:
-        #print(f'Mão 2: {flexion[1]}')
+    print(handDirection)
 
     # Mostra a imagem da câmera
     cv.imshow("Camera", img)
