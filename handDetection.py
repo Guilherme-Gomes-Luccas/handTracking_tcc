@@ -6,7 +6,7 @@ import math
 # Inicializando as listas com dois espaços para as mãos
 flexion = [None, None]  
 proximity = [None, None]
-contact = [None, None]
+fingerThumbContact = [None, None]
 thumbDirection = [None, None]
 palm = [None, None]
 handDirection = [None, None]
@@ -22,6 +22,7 @@ cam = cv.VideoCapture(0)
 cam.set(cv.CAP_PROP_FRAME_WIDTH, 1280)
 cam.set(cv.CAP_PROP_FRAME_HEIGHT, 720)
 
+# Inicialização do mediapípeHands
 def findHands(img):
     img_rgb = cv.cvtColor(img, cv.COLOR_BGR2RGB)
     result = hands.process(img_rgb)
@@ -34,47 +35,42 @@ def findHands(img):
 
     return img, hands_data
 
-
-def fingerFlexion(landmarks, handSide):
-    fingerFlexion = []
-
-    # Dedo polegar
-    if handSide == "Right":
-        if landmarks.landmark[4].x > landmarks.landmark[3].x:
-            fingerFlexion.append(-1)  # Flexionado
-        elif landmarks.landmark[4].x < landmarks.landmark[3].x:
-            fingerFlexion.append(1)  # Não flexionado
-        else:
-            fingerFlexion.append(0)  # Neutro
-    else:
-        if landmarks.landmark[4].x > landmarks.landmark[3].x:
-            fingerFlexion.append(1)  # Flexionado
-        elif landmarks.landmark[4].x < landmarks.landmark[3].x:
-            fingerFlexion.append(-1)  # Não flexionado
-        else:
-            fingerFlexion.append(0)  # Neutro
-
-    # Outros dedos
-    for tip in [8, 12, 16, 20]:
-        if landmarks.landmark[tip].y < landmarks.landmark[tip - 2].y:
-            fingerFlexion.append(1)  # Flexionado
-        elif landmarks.landmark[tip].y > landmarks.landmark[tip - 2].y:
-            fingerFlexion.append(-1)  # Não flexionado
-        else:
-            fingerFlexion.append(0)  # Neutro
-
-    return fingerFlexion
-
 # Função para calcular a distância euclidiana entre dois pontos
 def euclidean_distance(point1, point2):
     return math.sqrt((point1.x - point2.x) ** 2 + 
                      (point1.y - point2.y) ** 2 + 
                      (point1.z - point2.z) ** 2)
 
-def fingerProximity(landmarks, thresholdTogether=0.05, thresholdSeparated = 0.07):
+# Função auxiliar para comparar dois pontos    
+def comparePoints(point1, point2):
+    if point1 > point2:
+        return 1
+    elif point1 < point2:
+        return -1
+    else:
+        return 0
+
+# Função para checar se os dedos estão flexionados
+def fingerFlexion(landmarks, handSide):
+    fingerFlexion = []
+
+    # Dedo polegar
+    if handSide == "Right":
+        fingerFlexion.append(comparePoints(landmarks.landmark[3].x, landmarks.landmark[4].x))
+    else:
+        fingerFlexion.append(comparePoints(landmarks.landmark[4].x, landmarks.landmark[3].x))
+
+    # Outros dedos
+    for tip in [8, 12, 16, 20]:
+        fingerFlexion.append(comparePoints(landmarks.landmark[tip - 2].y, landmarks.landmark[tip].y))
+
+    return fingerFlexion
+
+# Função que checa a proximidade dos dedos
+def fingerProximity(landmarks, thresholdTogether=0.05, thresholdSeparated=0.07):
     fingerProximity = []
 
-    for tip, nextPoint in zip([8, 12, 15], [11, 16, 20]):
+    for tip, nextPoint in zip([8, 12, 16], [11, 16, 20]):
         distance = euclidean_distance(landmarks.landmark[tip], landmarks.landmark[nextPoint])
 
         if distance < thresholdTogether:
@@ -86,7 +82,9 @@ def fingerProximity(landmarks, thresholdTogether=0.05, thresholdSeparated = 0.07
 
     return fingerProximity
 
-def thumbContact(landmarks, thresholdTogether=0.06, thresholdSeparated = 0.10):
+
+# função para detectar o contato dos dedos com o polegar
+def thumbContact(landmarks, thresholdTogether=0.06, thresholdSeparated=0.10):
     thumbContact = []
 
     for tip in [8, 12, 16, 20]:
@@ -101,64 +99,49 @@ def thumbContact(landmarks, thresholdTogether=0.06, thresholdSeparated = 0.10):
 
     return thumbContact
 
-import math
-
-def pointingThumbDirection(landmarks, sideThreshold=10):
+# Função para detectar a direção do polegar
+def pointingThumbDirection(landmarks):
     tip = landmarks.landmark[4]   # Ponta do polegar
     base = landmarks.landmark[3]  # Base do polegar
     wrist = landmarks.landmark[0] # Pulso
 
-    # Verifica se o polegar está para cima (tip acima da base e do pulso)
     if tip.y < base.y and tip.y < wrist.y:
         return 1  # Polegar para cima
     
-    # Verifica se o polegar está para baixo (tip abaixo da base e do pulso)
     elif tip.y > base.y and tip.y > wrist.y:
         return -1  # Polegar para baixo
 
-    # Calcular o vetor entre a base e a ponta do polegar
     delta_x = tip.x - base.x
     delta_y = tip.y - base.y
 
-    # Calcular a inclinação (ângulo) do vetor
     angle = math.atan2(delta_y, delta_x)  # Ângulo em radianos
 
-    # Verifica se o polegar está de lado (ângulo próximo de 0 ou π)
-    if abs(angle) < sideThreshold or abs(abs(angle) - math.pi) < sideThreshold:
+    if abs(angle) < 0.2 or abs(abs(angle) - math.pi) < 0.2:
         return 0  # Polegar de lado
 
-    # Caso não se encaixe nas condições acima, podemos retornar um valor padrão
-    return None
-
+# Função para detectar a direção da mão
 def palmDirection(landmarks):
-    # One-hot encoding for palm orientation: Left, Right, Down, Up, Inward, Outward
     palmDirections = [0, 0, 0, 0, 0, 0] 
     
-    # Coordenadas principais para definir os vetores
-    palm = np.array([landmarks.landmark[0].x, landmarks.landmark[0].y, landmarks.landmark[0].z])  # Centro da palma
-    base_middle_finger = np.array([landmarks.landmark[9].x, landmarks.landmark[9].y, landmarks.landmark[9].z])  # Base do dedo médio
-    base_pinky_finger = np.array([landmarks.landmark[17].x, landmarks.landmark[17].y, landmarks.landmark[17].z])  # Base do dedo mínimo
+    palm = np.array([landmarks.landmark[0].x, landmarks.landmark[0].y, landmarks.landmark[0].z])  
+    base_middle_finger = np.array([landmarks.landmark[9].x, landmarks.landmark[9].y, landmarks.landmark[9].z])  
+    base_pinky_finger = np.array([landmarks.landmark[17].x, landmarks.landmark[17].y, landmarks.landmark[17].z])  
 
-    # Vetores que definem a orientação da mão
     palm_vector = base_middle_finger - palm
     base_vector = base_pinky_finger - palm
 
-    # Vetor normal à palma da mão (produto vetorial dos dois vetores da palma)
-    normal_vector = np.cross(palm_vector, base_vector)
+    normal_vector = np.cross(palm_vector, base_vector) # cálculo do vetor normal
 
-    # Direção Z -> Determina se a palma está voltada para cima (Up) ou para baixo (Down)
     if normal_vector[2] > 0:
         palmDirections[3] = 1  # Up
     else:
         palmDirections[2] = 1  # Down
 
-    # Direção X -> Determina se a palma está orientada para esquerda (Left) ou direita (Right)
     if normal_vector[0] > 0:
         palmDirections[1] = 1  # Right
     else:
         palmDirections[0] = 1  # Left
 
-    # Direção Y -> Determina se a palma está voltada para dentro (Inward) ou para fora (Outward)
     if normal_vector[1] > 0:
         palmDirections[5] = 1  # Outward
     else:
@@ -180,7 +163,7 @@ def process_hand_data(hand_data, index):
         'value': fingerProximity(hand_data['landmarks'])
     }
 
-    contact[index] = {
+    fingerThumbContact[index] = {
         'info': hand_data['info'].classification[0].label,
         'value': thumbContact(hand_data['landmarks'])
     }
@@ -205,13 +188,13 @@ while True:
     if not ret:
         break
 
-    img = cv.flip(img, 1)
+    img = cv.flip(img, 1) # Inverte a imagem da câmera
     img, hands_data = findHands(img)
 
     for i, hand_data in enumerate(hands_data[:2]):  # Limita ao máximo de 2 mãos
         process_hand_data(hand_data, i)
 
-    print(handDirection)
+    print(flexion)
 
     # Mostra a imagem da câmera
     cv.imshow("Camera", img)
